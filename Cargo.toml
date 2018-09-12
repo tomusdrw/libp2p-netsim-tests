@@ -1,0 +1,9 @@
+[package]
+name = "netsim-tests"
+version = "0.1.0"
+authors = ["Tomasz Drwięga <tomusdrw@gmail.com>"]
+
+[dependencies]
+netsim = "0.2"
+tokio-core = "0.1"
+libp2p = { git = "https://github.com/libp2p/rust-libp2p", rev = "ea881e3dfab2ad0818a9fa92ef992700a6220b29" }
