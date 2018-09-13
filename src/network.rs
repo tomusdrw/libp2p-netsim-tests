@@ -49,7 +49,7 @@ impl<NodeKind> Network<NodeKind> where
             kind,
         };
         let prev = self.nodes.insert(id.clone(), node);
-        assert!(prev.is_none(), "Duplicate id: {:?}", id);
+        assert!(prev.is_none(), "Duplicate id: {}", id);
 
         id
     }
@@ -84,16 +84,16 @@ impl<NodeKind> Network<NodeKind> where
             let node_runner = node_runner.clone();
 
             nodes.push(node::ipv4::machine(move |addr| {
-                println!("[{:?}] Starting", id);
+                println!("[{}] Starting", id);
                 addr_tx.send(addr).expect("Network not running");
                 let mut node = node_runner(node.id, node.kind, addr);
-                println!("[{:?}] Waiting for connections", id);
+                println!("[{}] Waiting for connections", id);
                 for addr in conn_rx {
                     node.connect_to(addr);
                 }
-                println!("[{:?}] Running", id);
+                println!("[{}] Running", id);
                 let res = (id.clone(), node.wait());
-                println!("[{:?}] Done", id);
+                println!("[{}] Done", id);
                 res
             }));
         }
@@ -114,7 +114,7 @@ impl<NodeKind> Network<NodeKind> where
                     addr.insert(id, a);
                 },
                 Err(e) => {
-                    println!("Unable to get address of {:?}: {:?}", id, e);
+                    println!("Unable to get address of {}: {:?}", id, e);
                 },
             }
         }
@@ -122,6 +122,7 @@ impl<NodeKind> Network<NodeKind> where
         for (a, b) in self.connections {
             match (connect_to.get(&a), addr.get(&b)) {
                 (Some(tx), Some(addr)) => {
+                    println!("Connecting {} -> {}", a, b);
                     tx.send(addr.clone()).expect("Node should be listening for connections.");
                 },
                 _ => {},

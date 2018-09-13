@@ -41,6 +41,7 @@ impl network::RunningNode for Node {
 }
 
 struct Receiver {
+    id: network::NodeId,
     core: Core,
     controller: libp2p::core::SwarmController<libp2p::core::transport::dummy::DummyMuxing<libp2p::CommonTransport>>,
     run: Option<Box<Future<Item = (), Error = ()>>>,
@@ -52,10 +53,11 @@ impl Receiver {
         let transport = libp2p::CommonTransport::new();
         let mut multiaddr = addr.to_multiaddr().unwrap();
         multiaddr.append(libp2p::multiaddr::AddrComponent::TCP(1025));
+        let id2 = id.clone();
         let (controller, run) = libp2p::swarm(
             transport.with_dummy_muxing(),
             move |future, _| {
-                let id = id.clone();
+                let id = id2.clone();
                 tokio_io::io::read_to_end(future, vec![])
                     .map(move |(_more, res)| {
                         println!("[{}] Received: {:?}", id, String::from_utf8(res));
@@ -66,6 +68,7 @@ impl Receiver {
         let _addr = controller.listen_on(multiaddr.clone()).unwrap();
 
         Receiver {
+            id,
             core,
             controller,
             run: Some(Box::new(run.map_err(|e| panic!("{:?}", e)))),
@@ -83,6 +86,7 @@ impl network::RunningNode for Receiver {
     }
 
     fn wait(mut self) -> Self::Result {
+        println!("[{}] Receiver running.", self.id);
         let _res = self.core.run(self.run.take().unwrap());
 
         ()
@@ -90,17 +94,19 @@ impl network::RunningNode for Receiver {
 }
 
 struct Sender {
+    id: network::NodeId,
     core: Core,
-    transport: Option<libp2p::CommonTransport>,
-    run: Option<Box<Future<Item = (), Error = ()>>>,
+    transport: libp2p::CommonTransport,
+    target: libp2p::Multiaddr,
 }
 
 impl Sender {
-    pub fn new(_id: network::NodeId) -> Self {
+    pub fn new(id: network::NodeId) -> Self {
         Sender {
+            id,
             core: Core::new().unwrap(),
-            transport: Some(libp2p::CommonTransport::new()),
-            run: None,
+            transport: libp2p::CommonTransport::new(),
+            target: "/ip4/127.0.0.1".parse().unwrap(),
         }
     }
 }
@@ -111,39 +117,42 @@ impl network::RunningNode for Sender {
     fn connect_to(&mut self, addr: Ipv4Addr) {
         let mut multiaddr = addr.to_multiaddr().unwrap();
         multiaddr.append(libp2p::multiaddr::AddrComponent::TCP(1025));
-        let transport = self.transport.take().unwrap();
-        self.run = Some(Box::new(transport.dial(multiaddr)
-            .unwrap()
-            .map(|(mut stream, _addr)| {
-                println!("[node2] Connected.");
-                stream.write_all(b"Hello World!").unwrap();
-                println!("[node2] Wrote data.");
-            })
-            .map_err(|e| panic!("{:?}", e))
-        ));
+        self.target = multiaddr;
     }
 
     fn wait(mut self) -> Self::Result {
-        let _res = self.core.run(self.run.take().unwrap());
+        println!("[{}] Sender running.", self.id);
+        ::std::thread::sleep_ms(10);
+        let id = self.id.clone();
+        let run = self.transport.clone().dial(self.target.clone())
+            .unwrap()
+            .map(move |(mut stream, _addr)| {
+                println!("[{}] Connected.", id);
+                stream.write_all(b"Hello World!").unwrap();
+                println!("[{}] Wrote data.", id);
+            })
+            .map_err(|e| println!("{:?}", e));
 
-        ()
+        let _res = self.core.run(run);
     }
 }
 
 
 fn main() {
     let mut network = network::Network::default();
-    let a = network.node("node1", NodeKind::Sender);
-    let b = network.node("node2", NodeKind::Receiver);
+    let a = network.node("node1", NodeKind::Receiver);
+    let b = network.node("node2", NodeKind::Sender);
+    let c = network.node("node3", NodeKind::Sender);
 
-    network.connect_all(&[b, a]);
+    network.connect_all(&[b, a.clone()]);
+    network.connect_all(&[c, a]);
 
     network.start(|id, kind, addr| {
     match kind {
-            NodeKind::Receiver => {
+            NodeKind::Sender => {
                 Node::Sender(Sender::new(id))
             },
-            NodeKind::Sender => {
+            NodeKind::Receiver => {
                 Node::Receiver(Receiver::new(id, addr))
             },
         }
