@@ -42,6 +42,7 @@ impl<NodeKind> Default for Network<NodeKind> {
 impl<NodeKind> Network<NodeKind> where
     NodeKind: Send + 'static,
 {
+    /// Add a new node to the network.
     pub fn node<T: Into<String>>(&mut self, id: T, kind: NodeKind) -> NodeId {
         let id = NodeId(id.into());
         let node = Node {
@@ -54,11 +55,31 @@ impl<NodeKind> Network<NodeKind> where
         id
     }
 
+    /// Connects all nodes between each other.
+    ///
+    /// NOTE opens connections from A->B and also B->A,
+    /// but never A->A
     pub fn connect_all(&mut self, nodes: &[NodeId]) {
-        for (idx, a) in nodes.iter().enumerate() {
-            for b in nodes.iter().skip(idx + 1) {
-                self.connections.push((a.clone(), b.clone()));
+        for a in nodes {
+            for b in nodes {
+                if a != b {
+                    self.connections.push((a.clone(), b.clone()));
+                }
             }
+        }
+    }
+
+    /// Connect each of the given nodes to the node passed as second parameter.
+    pub fn connect_each_to(&mut self, nodes: &[NodeId], target: NodeId) {
+        for a in nodes {
+            self.connections.push((a.clone(), target.clone()));
+        }
+    }
+
+    /// Connect a node given as first parameter to all listed nodes.
+    pub fn connect_to_all(&mut self, node: NodeId, targets: &[NodeId]) {
+        for a in targets {
+            self.connections.push((node.clone(), a.clone()));
         }
     }
 
@@ -73,25 +94,33 @@ impl<NodeKind> Network<NodeKind> where
 
 
         let mut nodes = vec![];
+        let mut init = vec![];
         let mut addresses = HashMap::new();
         let mut connect_to = HashMap::new();
 
         for (id, node) in self.nodes {
             let (addr_tx, addr_rx) = mpsc::channel();
             let (conn_tx, conn_rx) = mpsc::channel();
+            let (init_tx, init_rx) = mpsc::channel();
             addresses.insert(id.clone(), addr_rx);
             connect_to.insert(id.clone(), conn_tx);
+            init.push(init_rx);
             let node_runner = node_runner.clone();
 
             nodes.push(node::ipv4::machine(move |addr| {
                 println!("[{}] Starting", id);
+
                 addr_tx.send(addr).expect("Network not running");
                 let mut node = node_runner(node.id, node.kind, addr);
+
+                println!("[{}] Sending start signal", id);
+                init_tx.send(()).expect("Network init failed.");
+
                 println!("[{}] Waiting for connections", id);
                 for addr in conn_rx {
                     node.connect_to(addr);
                 }
-                println!("[{}] Running", id);
+
                 let res = (id.clone(), node.wait());
                 println!("[{}] Done", id);
                 res
@@ -118,6 +147,12 @@ impl<NodeKind> Network<NodeKind> where
                 },
             }
         }
+
+        // synchronize start of all nodes
+        for a in init {
+            a.recv().expect("Node should be sending start signal.");
+        }
+
         // connect to each other
         for (a, b) in self.connections {
             match (connect_to.get(&a), addr.get(&b)) {
