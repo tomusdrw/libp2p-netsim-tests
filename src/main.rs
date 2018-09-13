@@ -2,7 +2,6 @@ extern crate netsim;
 extern crate tokio_core;
 extern crate libp2p;
 
-use std::io::{Write};
 use std::net::Ipv4Addr;
 use tokio_core::reactor::Core;
 use libp2p::{tokio_io, Transport};
@@ -44,15 +43,13 @@ struct Receiver {
     id: network::NodeId,
     core: Core,
     controller: libp2p::core::SwarmController<libp2p::core::transport::dummy::DummyMuxing<libp2p::CommonTransport>>,
-    run: Option<Box<Future<Item = (), Error = ()>>>,
+    run: Box<Future<Item = (), Error = ()>>,
 }
 
 impl Receiver {
     pub fn new(id: network::NodeId, addr: Ipv4Addr) -> Self {
         let core = Core::new().unwrap();
         let transport = libp2p::CommonTransport::new();
-        let mut multiaddr = addr.to_multiaddr().unwrap();
-        multiaddr.append(libp2p::multiaddr::AddrComponent::TCP(1025));
         let id2 = id.clone();
         let (controller, run) = libp2p::swarm(
             transport.with_dummy_muxing(),
@@ -64,14 +61,15 @@ impl Receiver {
                     })
             },
         );
-
+        let mut multiaddr = addr.to_multiaddr().unwrap();
+        multiaddr.append(libp2p::multiaddr::AddrComponent::TCP(1025));
         let _addr = controller.listen_on(multiaddr.clone()).unwrap();
 
         Receiver {
             id,
             core,
             controller,
-            run: Some(Box::new(run.map_err(|e| panic!("{:?}", e)))),
+            run: Box::new(run.map_err(|e| panic!("{:?}", e))),
         }
     }
 }
@@ -87,7 +85,7 @@ impl network::RunningNode for Receiver {
 
     fn wait(mut self) -> Self::Result {
         println!("[{}] Receiver running.", self.id);
-        let _res = self.core.run(self.run.take().unwrap());
+        let _res = self.core.run(self.run);
 
         ()
     }
@@ -96,17 +94,35 @@ impl network::RunningNode for Receiver {
 struct Sender {
     id: network::NodeId,
     core: Core,
-    transport: libp2p::CommonTransport,
-    target: libp2p::Multiaddr,
+    controller: libp2p::core::SwarmController<libp2p::core::transport::dummy::DummyMuxing<libp2p::CommonTransport>>,
+    run: Box<Future<Item = (), Error = ()>>,
 }
 
 impl Sender {
-    pub fn new(id: network::NodeId) -> Self {
+    pub fn new(id: network::NodeId, addr: Ipv4Addr) -> Self {
+        let transport = libp2p::CommonTransport::new();
+        let id2 = id.clone();
+        let (controller, run) = libp2p::swarm(
+            transport.with_dummy_muxing(),
+            move |future, _| {
+                let id = id2.clone();
+                println!("[{}] Sender sending.", id);
+                tokio_io::io::write_all(future, "Hello World!")
+                    .map(move |(_more, _res)| {
+                        println!("[{}] Sent", id);
+                    })
+            },
+        );
+
+        let mut multiaddr = addr.to_multiaddr().unwrap();
+        multiaddr.append(libp2p::multiaddr::AddrComponent::TCP(1025));
+        let _addr = controller.listen_on(multiaddr.clone()).unwrap();
+
         Sender {
             id,
             core: Core::new().unwrap(),
-            transport: libp2p::CommonTransport::new(),
-            target: "/ip4/127.0.0.1".parse().unwrap(),
+            controller,
+            run: Box::new(run.map_err(|e| panic!("{:?}", e))),
         }
     }
 }
@@ -117,23 +133,14 @@ impl network::RunningNode for Sender {
     fn connect_to(&mut self, addr: Ipv4Addr) {
         let mut multiaddr = addr.to_multiaddr().unwrap();
         multiaddr.append(libp2p::multiaddr::AddrComponent::TCP(1025));
-        self.target = multiaddr;
+        self.controller.dial(multiaddr, libp2p::CommonTransport::new()).unwrap();
     }
 
     fn wait(mut self) -> Self::Result {
         println!("[{}] Sender running.", self.id);
-        ::std::thread::sleep_ms(10);
-        let id = self.id.clone();
-        let run = self.transport.clone().dial(self.target.clone())
-            .unwrap()
-            .map(move |(mut stream, _addr)| {
-                println!("[{}] Connected.", id);
-                stream.write_all(b"Hello World!").unwrap();
-                println!("[{}] Wrote data.", id);
-            })
-            .map_err(|e| println!("{:?}", e));
+        let _res = self.core.run(self.run);
 
-        let _res = self.core.run(run);
+        ()
     }
 }
 
@@ -144,13 +151,13 @@ fn main() {
     let b = network.node("node2", NodeKind::Sender);
     let c = network.node("node3", NodeKind::Sender);
 
-    network.connect_all(&[b, a.clone()]);
-    network.connect_all(&[c, a]);
+    network.connect_all(&[a.clone(), b]);
+    network.connect_all(&[a, c]);
 
     network.start(|id, kind, addr| {
     match kind {
             NodeKind::Sender => {
-                Node::Sender(Sender::new(id))
+                Node::Sender(Sender::new(id, addr))
             },
             NodeKind::Receiver => {
                 Node::Receiver(Receiver::new(id, addr))
