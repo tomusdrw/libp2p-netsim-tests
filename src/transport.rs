@@ -14,9 +14,7 @@ pub fn build_transport(
 	mplex_config.max_buffer_len(usize::MAX);
 
 	let base = libp2p::CommonTransport::new()
-		.with_upgrade(secio::SecioConfig {
-			key: local_private_key,
-		})
+		.with_upgrade(secio::SecioConfig::new(local_private_key))
 		.and_then(move |out, endpoint, client_addr| {
 			let upgrade = upgrade::or(
 				upgrade::map(yamux::Config::default(), either::EitherOutput::First),
@@ -26,7 +24,7 @@ pub fn build_transport(
 			let upgrade = upgrade::map(upgrade, move |muxer| (peer_id, muxer));
 			upgrade::apply(out.stream, upgrade, endpoint, client_addr)
 		})
-		.map(|(id, muxer), _| (id, muxer.boxed()));
+		.map(|(id, muxer), _| (id, StreamMuxerBox::new(muxer)));
 
 	TransportTimeout::new(base, Duration::from_secs(20))
 		.boxed()
