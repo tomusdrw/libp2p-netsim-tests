@@ -5,6 +5,6 @@ authors = ["Tomasz Drwięga <tomusdrw@gmail.com>"]
 
 [dependencies]
 netsim = "0.2"
+tokio = "0.1"
 tokio-core = "0.1"
-tokio-current-thread = "0.1"
-libp2p = { path = "../rust-libp2p" }
+libp2p = { git = "https://github.com/libp2p/rust-libp2p" }

@@ -22,7 +22,6 @@ pub fn build_transport(
 			);
 			let peer_id = out.remote_key.into_peer_id();
 			let upgrade = upgrade::map(upgrade, move |muxer| (peer_id, muxer));
-            println!("New peer.");
 			upgrade::apply(out.stream, upgrade, endpoint, client_addr)
 		})
 		.map(|(id, muxer), _| (id, StreamMuxerBox::new(muxer)));
