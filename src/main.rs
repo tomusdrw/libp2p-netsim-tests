@@ -1,14 +1,19 @@
+extern crate libp2p;
 extern crate netsim;
 extern crate tokio_core;
-extern crate libp2p;
+extern crate tokio_current_thread;
 
-use std::net::Ipv4Addr;
-use tokio_core::reactor::Core;
-use libp2p::{tokio_io, Transport};
-use libp2p::futures::{Future, future::Either};
+use std::{
+    io,
+    net::Ipv4Addr,
+};
+use libp2p::{tokio_io, Transport, PeerId};
+use libp2p::core::{transport::boxed::Boxed, StreamMuxer, muxing::StreamMuxerBox};
+use libp2p::futures::{Stream, Future, future::Either};
 use libp2p::multiaddr::ToMultiaddr;
 
 mod network;
+// mod transport;
 
 #[derive(Debug)]
 enum NodeKind {
@@ -18,21 +23,22 @@ enum NodeKind {
 
 struct Node {
     id: network::NodeId,
-    core: Core,
-    controller: libp2p::core::SwarmController<libp2p::core::transport::dummy::DummyMuxing<libp2p::CommonTransport>>,
+    controller: libp2p::core::SwarmController<
+        libp2p::core::transport::dummy::DummyMuxing<libp2p::CommonTransport>,
+        Box<Future<Item = (), Error = io::Error>>
+    >,
     run: Box<Future<Item = (), Error = ()>>,
 }
 
 impl Node {
     pub fn new(id: network::NodeId, kind: NodeKind, addr: Ipv4Addr) -> Self {
-        let core = Core::new().unwrap();
         let transport = libp2p::CommonTransport::new();
         let id2 = id.clone();
         let (controller, run) = libp2p::swarm(
             transport.with_dummy_muxing(),
             move |future, _| {
                 let id = id2.clone();
-                match kind  {
+                Box::new(match kind  {
                     NodeKind::Sender => {
                         println!("[{}] Sender sending.", id);
                         Either::A(tokio_io::io::write_all(future, format!("Hello World from: {}", id))
@@ -47,7 +53,7 @@ impl Node {
                                 println!("[{}] Received: {:?}", id, String::from_utf8(res));
                             }))
                     },
-                }
+                }) as Box<Future<Item=(), Error=io::Error>>
             },
         );
 
@@ -57,9 +63,8 @@ impl Node {
 
         Self {
             id,
-            core,
             controller,
-            run: Box::new(run.map_err(|e| panic!("{:?}", e))),
+            run: Box::new(run.for_each(|_| Ok(())).map_err(|e| panic!("{:?}", e))),
         }
     }
 }
@@ -75,7 +80,7 @@ impl network::RunningNode for Node {
 
     fn wait(mut self) -> Self::Result {
         println!("[{}] Running.", self.id);
-        let _res = self.core.run(self.run);
+        tokio_current_thread::block_on_all(self.run).unwrap();
         println!("[{}] Done.", self.id);
         ()
     }
