@@ -26,7 +26,6 @@ struct Node {
     id: network::NodeId,
     swarm: libp2p::core::nodes::swarm::Swarm<
         Boxed<(PeerId, StreamMuxerBox)>,
-        // libp2p::core::transport::dummy::DummyMuxing<libp2p::CommonTransport>,
         StreamMuxerBox,
         Box<Future<Item = (), Error = io::Error> + Send>
     >,
@@ -39,6 +38,11 @@ impl Node {
         let key = SecioKeyPair::secp256k1_generated().unwrap();
         let mut swarm = libp2p::core::nodes::swarm::Swarm::new(
             transport::build_transport(key)
+                .map(|(peer, muxer), _| {
+                    println!("upgade");
+                    (peer, muxer)
+                })
+                .boxed()
             // move |future, _| {
             //     let id = id2.clone();
             //     Box::new(match kind  {
@@ -82,6 +86,7 @@ impl network::RunningNode for Node {
 
     fn wait(mut self) -> Self::Result {
         println!("[{}] Running.", self.id);
+        ::std::thread::sleep_ms(10_000);
         println!("[{}] Done.", self.id);
         ()
     }
